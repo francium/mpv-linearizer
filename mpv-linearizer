@@ -1,0 +1,142 @@
+#!/bin/env python3
+
+# PEP 563, 585
+from __future__ import annotations
+
+from dataclasses import dataclass
+import sys
+from typing import Optional
+from time import sleep
+
+import mpv
+
+
+Timestamp = str
+Seconds = int
+
+
+COMMENT_MARKER = '#'
+
+
+# TODO: player.container_fps has the video frame rate
+def timestamp_to_seconds(stamp: Timestamp) -> Seconds:
+    """
+    Format: HH:MM:SS
+    """
+
+    hours, minutes, seconds = [int(x) for x in stamp.split(':')]
+    return 3600 * hours + 60 * minutes + seconds
+
+
+@dataclass
+class PlaylistItem:
+    start: Seconds
+    end: Seconds
+
+
+class Playlist:
+    def __init__(self, media_path: str, ranges: list[PlaylistItem]) -> None:
+        self.media_path = media_path
+        self.ranges = ranges
+        self._current_item = 0
+        self.ended = False
+
+    def current_item(self) -> Optional[PlaylistItem]:
+        if self.ended:
+            return None
+
+        return self.ranges[self._current_item]
+
+    def next_item(self) -> Optional[PlaylistItem]:
+        if self.ended:
+            return None
+        return self.ranges[self._current_item + 1]
+
+    def next(self) -> Optional[PlaylistItem]:
+        self._current_item += 1
+        self.ended = self._current_item >= len(self.ranges)
+        return self.current_item()
+
+
+def parse_playlist_line(line: str) -> PlaylistItem:
+    start, end = [timestamp_to_seconds(x) for x in line.split(' ')]
+    return PlaylistItem(start, end)
+
+
+def parse_playlist(filename: str) -> Playlist:
+    with open(filename, 'r') as file:
+        raw_data = file.read().strip()
+
+    end_of_first_line = raw_data.index('\n')
+    if end_of_first_line == -1:
+        print('Playlist parsing error: Can\'t parse media file path')
+        sys.exit(1)
+
+    media_path = raw_data[0 : end_of_first_line].strip()
+    playlist = Playlist(media_path, [])
+
+    for line in raw_data[end_of_first_line:].split('\n'):
+        line = line.strip()
+
+        if len(line) == 0 or line[0] == COMMENT_MARKER:
+            continue
+
+        item = parse_playlist_line(line)
+        playlist.ranges.append(item)
+
+    return playlist
+
+
+class Player:
+    def __init__(self, playlist: Playlist) -> None:
+        self._playlist = playlist
+        self._player = mpv.MPV(
+            input_default_bindings=True,
+            input_vo_keyboard=True,
+            osc=True,
+            vo='gpu',
+        )
+        self._item = None
+        self._init_time_observer()
+
+    def play(self) -> None:
+        self._item = self._playlist.current_item()
+        if not self._item:
+            self._end()
+
+        self._player.play(playlist.media_path)
+        self._player.wait_for_playback()
+
+    def _init_time_observer(self) -> None:
+        @self._player.property_observer('time-pos')
+        def time_observer(_name, value) -> None:
+            if value is None or self._playlist.ended:
+                return
+
+            if value < self._item.start:
+                print('Seeking to first item at', self._item.start)
+                self._seek(self._item.start)
+
+            elif value > self._item.end:
+                self._item = self._playlist.next()
+                if not self._item:
+                    self._end()
+                    return
+                print('End of range, seeking to next start at', self._item.start)
+                self._seek(self._item.start)
+
+    def _end(self) -> None:
+        print('End of playlist')
+        self._pause(True)
+
+    def _seek(self, secs: Seconds) -> None:
+        self._player.seek(secs, 'absolute')
+
+    def _pause(self, state: bool) -> None:
+        self._player.pause = state
+
+
+if __name__ == '__main__':
+    playlist = parse_playlist(sys.argv[1])
+    player = Player(playlist)
+    player.play()
