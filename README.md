@@ -19,10 +19,12 @@ You can define a `playlist.txt` file,
 ```
 
 And then run this script to watch/listen to it in the defined order,
-`./mpv-linearizer playlist.txt`
+`./mpv-linearizer playlist.txt` (make sure `python-mpv` is either installed
+globally or virtualenv with it install is activated)
 
 
 ## Requirements
 - `mpv`
 - `python3.7+`
+- `python-mpv` Python module
 - A file that can be played by `mpv`
